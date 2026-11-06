@@ -11,6 +11,7 @@ import {
   Loader2,
   LockKeyhole,
   ShieldCheck,
+  KeyRound,
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -19,17 +20,17 @@ export default function ResetPasswordForm() {
   const { resetPassword } = useAuth();
 
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] =
-    useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
-  const [showPassword, setShowPassword] =
-    useState(false);
+  const [otp, setOtp] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
 
-  const [showConfirmPassword, setShowConfirmPassword] =
-    useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>
@@ -37,11 +38,11 @@ export default function ResetPasswordForm() {
     event.preventDefault();
 
     setError("");
+    setNotice("");
 
+    // Password validation
     if (password.length < 12) {
-      setError(
-        "Password must be at least 12 characters."
-      );
+      setError("Password must be at least 12 characters.");
       return;
     }
 
@@ -50,41 +51,45 @@ export default function ResetPasswordForm() {
       return;
     }
 
+    // Validate OTP only when MFA is required
+    if (mfaRequired && !/^\d{6,8}$/.test(otp)) {
+      setError("Enter a valid authenticator code.");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const result = await resetPassword(
-        password
+        password,
+        mfaRequired ? otp : undefined
       );
 
-      if (!result.success) {
-        setError(
-          result.error ??
-            "Unable to update your password."
+      // MFA is required before password update
+      if (result.requiresMfa) {
+        setMfaRequired(true);
+
+        setNotice(
+          "Your account has MFA enabled. Enter your authenticator code to continue."
         );
 
         return;
       }
 
-      /*
-       * resetPassword() handles navigation
-       * inside AuthContext.
-       *
-       * User:
-       * /reset-password → /dashboard
-       *
-       * Admin:
-       * /reset-password → /admin
-       */
-    } catch (error) {
-      console.error(
-        "Password reset error:",
-        error
-      );
+      // Handle errors
+      if (!result.success) {
+        setError(
+          result.error ?? "Unable to update your password."
+        );
 
-      setError(
-        "Something went wrong. Please try again."
-      );
+        return;
+      }
+
+      // Successful update redirects through AuthContext.
+    } catch (error) {
+      console.error("Password reset error:", error);
+
+      setError("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -118,8 +123,7 @@ export default function ResetPasswordForm() {
             </h2>
 
             <p className="mt-1 text-sm text-slate-400">
-              Choose a strong new password for your
-              MiniVault account.
+              Choose a strong new password for your MiniVault account.
             </p>
           </div>
 
@@ -130,6 +134,17 @@ export default function ResetPasswordForm() {
               className="mb-5 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400"
             >
               {error}
+            </div>
+          )}
+
+          {/* Information */}
+          {notice && (
+            <div
+              role="status"
+              className="mb-5 flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm text-blue-300"
+            >
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
+              <p>{notice}</p>
             </div>
           )}
 
@@ -156,11 +171,7 @@ export default function ResetPasswordForm() {
                 <input
                   id="password"
                   name="password"
-                  type={
-                    showPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(event) =>
                     setPassword(event.target.value)
@@ -176,15 +187,11 @@ export default function ResetPasswordForm() {
                 <button
                   type="button"
                   onClick={() =>
-                    setShowPassword(
-                      (current) => !current
-                    )
+                    setShowPassword((current) => !current)
                   }
                   disabled={loading}
                   aria-label={
-                    showPassword
-                      ? "Hide password"
-                      : "Show password"
+                    showPassword ? "Hide password" : "Show password"
                   }
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -219,16 +226,10 @@ export default function ResetPasswordForm() {
                 <input
                   id="confirmPassword"
                   name="confirmPassword"
-                  type={
-                    showConfirmPassword
-                      ? "text"
-                      : "password"
-                  }
+                  type={showConfirmPassword ? "text" : "password"}
                   value={confirmPassword}
                   onChange={(event) =>
-                    setConfirmPassword(
-                      event.target.value
-                    )
+                    setConfirmPassword(event.target.value)
                   }
                   placeholder="Confirm new password"
                   required
@@ -241,9 +242,7 @@ export default function ResetPasswordForm() {
                 <button
                   type="button"
                   onClick={() =>
-                    setShowConfirmPassword(
-                      (current) => !current
-                    )
+                    setShowConfirmPassword((current) => !current)
                   }
                   disabled={loading}
                   aria-label={
@@ -262,10 +261,55 @@ export default function ResetPasswordForm() {
               </div>
             </div>
 
+            {/* MFA Authenticator */}
+            {mfaRequired && (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+
+                <div className="mb-3 flex items-center gap-2">
+                  <KeyRound className="h-5 w-5 text-blue-400" />
+
+                  <label
+                    htmlFor="otp"
+                    className="font-medium text-white"
+                  >
+                    Authenticator code
+                  </label>
+                </div>
+
+                <input
+                  id="otp"
+                  name="otp"
+                  type="text"
+                  value={otp}
+                  onChange={(event) =>
+                    setOtp(
+                      event.target.value
+                        .replace(/\D/g, "")
+                        .slice(0, 8)
+                    )
+                  }
+                  placeholder="Enter your 6-digit code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={8}
+                  required
+                  disabled={loading}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3.5 text-lg tracking-[0.2em] text-white outline-none placeholder:text-sm placeholder:tracking-normal focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                />
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Open Google Authenticator or your compatible authenticator app.
+                </p>
+              </div>
+            )}
+
             {/* Submit */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={
+                loading ||
+                (mfaRequired && !/^\d{6,8}$/.test(otp))
+              }
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? (
@@ -276,7 +320,9 @@ export default function ResetPasswordForm() {
               ) : (
                 <>
                   <LockKeyhole className="h-5 w-5" />
-                  Update password
+                  {mfaRequired
+                    ? "Verify and update password"
+                    : "Update password"}
                 </>
               )}
             </button>
@@ -298,6 +344,7 @@ export default function ResetPasswordForm() {
           <CheckCircle2 className="h-4 w-4" />
           Your password is securely managed by MiniVault.
         </div>
+
       </div>
     </main>
   );
