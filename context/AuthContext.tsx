@@ -376,67 +376,178 @@ export function AuthProvider({
     }
   }
 
-  async function resetPassword(
-    password: string
-  ): Promise<AuthResult> {
-    try {
-      if (!password) {
-        return { success: false, error: "Password is required." };
-      }
 
-      if (password.length < 12) {
-        return {
-          success: false,
-          error: "Password must be at least 12 characters.",
-        };
-      }
 
-      const { data, error } = await supabase.auth.updateUser({
-        password,
-      });
 
-      if (error) {
-        return { success: false, error: error.message };
-      }
 
-      if (!data.user) {
-        return {
-          success: false,
-          error: "Password updated, but the user session was not found.",
-        };
-      }
-
-      const currentRole = await fetchUserRole(data.user.id);
-
-      if (!currentRole) {
-        return {
-          success: false,
-          error: "Password updated, but your profile could not be verified.",
-        };
-      }
-
-      setUser(data.user);
-      setRole(currentRole);
-
-      router.push(
-        currentRole === "admin" ? "/admin" : "/dashboard"
-      );
-      router.refresh();
-
-      return { success: true };
-    } catch (error) {
-      console.error("Reset password error:", error);
-
+async function resetPassword(
+  password: string,
+  otp?: string
+): Promise<AuthResult> {
+  try {
+    if (!password) {
       return {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to reset password.",
+        error: "Password is required.",
       };
     }
-  }
 
+    if (password.length < 12) {
+      return {
+        success: false,
+        error: "Password must be at least 12 characters.",
+      };
+    }
+
+    // 1. Check the current authentication assurance level.
+    const { data: aal, error: aalError } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+    if (aalError) {
+      return { success: false, error: aalError.message };
+    }
+
+    // 2. Determine whether MFA verification is required.
+    const mfaRequired =
+      aal.currentLevel !== "aal2" &&
+      aal.nextLevel === "aal2";
+
+    if (mfaRequired) {
+      // First submission: tell the UI to request an OTP.
+      if (!otp) {
+        return {
+          success: false,
+          requiresMfa: true,
+        };
+      }
+
+      // 3. Find the user's verified TOTP factor.
+      const { data: factors, error: factorsError } =
+        await supabase.auth.mfa.listFactors();
+
+      if (factorsError) {
+        return {
+          success: false,
+          error: factorsError.message,
+        };
+      }
+
+      const factor = factors.totp.find(
+        (item) => item.status === "verified"
+      );
+
+      if (!factor) {
+        return {
+          success: false,
+          error: "No verified authenticator was found.",
+        };
+      }
+
+      // 4. Create an MFA challenge.
+      const { data: challenge, error: challengeError } =
+        await supabase.auth.mfa.challenge({
+          factorId: factor.id,
+        });
+
+      if (challengeError) {
+        return {
+          success: false,
+          error: challengeError.message,
+        };
+      }
+
+      // 5. Verify the user's authenticator code.
+      const { error: verifyError } =
+        await supabase.auth.mfa.verify({
+          factorId: factor.id,
+          challengeId: challenge.id,
+          code: otp,
+        });
+
+      if (verifyError) {
+        return {
+          success: false,
+          error: verifyError.message,
+        };
+      }
+
+      // 6. Confirm that the session is now AAL2.
+      const { data: verifiedAal, error: verifiedAalError } =
+        await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+      if (verifiedAalError) {
+        return {
+          success: false,
+          error: verifiedAalError.message,
+        };
+      }
+
+      if (verifiedAal.currentLevel !== "aal2") {
+        return {
+          success: false,
+          error: "Additional authentication is required.",
+        };
+      }
+    }
+
+    // 7. Update the password.
+    const { data, error } = await supabase.auth.updateUser({
+      password,
+    });
+
+    if (error) {
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+
+    if (!data.user) {
+      return {
+        success: false,
+        error: "Password updated, but user session was not found.",
+      };
+    }
+
+    // 8. Preserve your existing database role verification.
+    const currentRole = await fetchUserRole(data.user.id);
+
+    if (!currentRole) {
+      return {
+        success: false,
+        error: "Password updated, but your profile could not be verified.",
+      };
+    }
+
+    setUser(data.user);
+    setRole(currentRole);
+
+    // 9. Preserve your existing redirects.
+    router.push(
+      currentRole === "admin" ? "/admin" : "/dashboard"
+    );
+
+    router.refresh();
+
+    return { success: true };
+
+  } catch (error) {
+    console.error("Reset password error:", error);
+
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unable to reset password.",
+    };
+  }
+  }
+  
+
+
+
+  
   async function signOut(): Promise<void> {
     const currentRole = role;
 
