@@ -16,6 +16,7 @@ export type UserRole = "user" | "admin";
 type AuthResult = {
   success: boolean;
   error?: string;
+  requiresMfa?: boolean;
 };
 
 type AuthContextType = {
@@ -35,7 +36,11 @@ type AuthContextType = {
     password: string
   ) => Promise<AuthResult>;
   forgotPassword: (email: string) => Promise<AuthResult>;
-  resetPassword: (password: string) => Promise<AuthResult>;
+
+  resetPassword: (
+  password: string,
+  otp?: string
+) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
 
